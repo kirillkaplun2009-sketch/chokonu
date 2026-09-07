@@ -38,6 +38,31 @@
             -webkit-tap-highlight-color: transparent;
         }
 
+        /* Экран авторизации */
+        #authOverlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--bg-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .auth-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            padding: 40px 30px;
+            border-radius: 24px;
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
+        }
+
         .section {
             display: none;
             max-width: 900px;
@@ -558,7 +583,19 @@
 </head>
 <body>
 
-    <div id="appContent">
+    <!-- ОКНО АВТОРИЗАЦИИ -->
+    <div id="authOverlay">
+        <div class="auth-card">
+            <h1 style="margin-top:0; font-size: 2rem; background: linear-gradient(135deg, var(--accent-color), var(--workout-color)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">chokonu</h1>
+            <p style="color: var(--subtext-color); font-size: 0.95rem; margin-bottom: 25px;">Войдите через Google, чтобы ваши задачи и заметки синхронизировались персонально</p>
+            <button class="btn" onclick="loginWithGoogle()" style="width: 100%; padding: 12px; background: #ffffff; color: #1e293b; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 10px; border-radius: 12px;">
+                <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.13 0-5.78-2.11-6.73-4.96H1.18v3.15C3.15 21.32 7.22 24 12 24z"/><path fill="#FBBC05" d="M5.27 14.24c-.25-.72-.38-1.5-.38-2.24s.13-1.52.38-2.24V6.6H1.18C.43 8.13 0 9.87 0 11.7s.43 3.57 1.18 5.1l4.09-2.56z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.22 0 3.15 2.68 1.18 6.6l4.09 3.15c.95-2.85 3.6-4.96 6.73-4.96z"/></svg>
+                Войти через Google
+            </button>
+        </div>
+    </div>
+
+    <div id="appContent" style="display:none;">
         <!-- ГЛАВНЫЙ ЭКРАН -->
         <div class="home-container" id="homeView">
             <div class="home-header">
@@ -568,6 +605,7 @@
                         🔥 <span id="streakCount">0</span> дн.
                     </div>
                     <button class="tool-btn" onclick="toggleTheme()" title="Сменить тему">🌙 / ☀️</button>
+                    <button class="tool-btn" onclick="logoutUser()" title="Выйти" style="border-color:var(--important-color); color:var(--important-color);">Выйти</button>
                 </div>
             </div>
 
@@ -719,9 +757,10 @@
         </div>
     </div>
 
-    <!-- МОДУЛЬНЫЙ FIREBASE СКРИПТ (СВЯЗАННЫЙ С ВАШИМ ПРИЛОЖЕНИЕМ) -->
+    <!-- МОДУЛЬНЫЙ FIREBASE СКРИПТ С АВТОРИЗАЦИЕЙ -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -735,8 +774,12 @@
         };
 
         const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
         const db = getFirestore(app);
-        const DOC_ID = "user_main_data";
+        const provider = new GoogleAuthProvider();
+
+        let currentUserUid = null;
+        let unsubscribeFirestore = null;
 
         let currentDate = new Date();
         let selectedDateKey = formatDateKey(new Date());
@@ -745,38 +788,70 @@
         let selectedDays = new Set();
         let activeModalNoteId = null;
 
-        let userData = JSON.parse(localStorage.getItem('chokonuData')) || {
+        let userData = {
             calendarTasks: {},
             notebookData: [],
             streak: { count: 0, lastDate: '' },
             isLight: false
         };
 
-        if (!userData.notebookData) userData.notebookData = [];
-        if (!userData.calendarTasks) userData.calendarTasks = {};
-
-        // Глобальная функция сохранения в Firebase
-        window.saveData = function() {
-            localStorage.setItem('chokonuData', JSON.stringify(userData));
-            renderAll();
-            setDoc(doc(db, "app_data", DOC_ID), userData)
-                .catch((error) => {
-                    console.error("Ошибка сохранения в Firebase: ", error);
-                });
+        window.loginWithGoogle = function() {
+            signInWithPopup(auth, provider).catch((error) => {
+                console.error("Ошибка входа:", error);
+                alert("Не удалось войти через Google. Проверьте настройки авторизации в консоли Firebase.");
+            });
         };
 
-        // Слушаем изменения в реальном времени из облака
-        onSnapshot(doc(db, "app_data", DOC_ID), (docSnap) => {
-            if (docSnap.exists()) {
-                userData = docSnap.data();
-                if (!userData.notebookData) userData.notebookData = [];
-                if (!userData.calendarTasks) userData.calendarTasks = {};
-                localStorage.setItem('chokonuData', JSON.stringify(userData));
-                renderAll();
+        window.logoutUser = function() {
+            signOut(auth).then(() => {
+                if (unsubscribeFirestore) unsubscribeFirestore();
+                document.getElementById('authOverlay').style.display = 'flex';
+                document.getElementById('appContent').style.display = 'none';
+            });
+        };
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUserUid = user.uid;
+                document.getElementById('authOverlay').style.display = 'none';
+                document.getElementById('appContent').style.display = 'block';
+
+                // Подгружаем данные конкретного пользователя из Firestore
+                const userDocRef = doc(db, "users", currentUserUid);
+                unsubscribeFirestore = onSnapshot(userDocRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        userData = docSnap.data();
+                        if (!userData.notebookData) userData.notebookData = [];
+                        if (!userData.calendarTasks) userData.calendarTasks = {};
+                    } else {
+                        // Если данных еще нет, создаем начальные
+                        userData = {
+                            calendarTasks: {},
+                            notebookData: [],
+                            streak: { count: 0, lastDate: '' },
+                            isLight: false
+                        };
+                        setDoc(userDocRef, userData);
+                    }
+                    renderAll();
+                }, (error) => {
+                    console.error("Ошибка загрузки данных:", error);
+                });
+            } else {
+                currentUserUid = null;
+                document.getElementById('authOverlay').style.display = 'flex';
+                document.getElementById('appContent').style.display = 'none';
             }
-        }, (error) => {
-            console.error("Ошибка синхронизации: ", error);
         });
+
+        window.saveData = function() {
+            if (!currentUserUid) return;
+            renderAll();
+            setDoc(doc(db, "users", currentUserUid), userData)
+                .catch((error) => {
+                    console.error("Ошибка сохранения: ", error);
+                });
+        };
 
         function formatDateKey(date) {
             const y = date.getFullYear();
@@ -1255,8 +1330,6 @@
         function escapeHtml(text) {
             return text ? text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") : '';
         }
-
-        renderAll();
     </script>
 </body>
 </html>
